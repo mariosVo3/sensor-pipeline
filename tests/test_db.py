@@ -154,6 +154,26 @@ def test_save_reading_returns_true_then_false_for_duplicate(conn):
     assert conn.execute("SELECT count(*) FROM readings").fetchone() == (2,)
 
 
+def test_save_reading_with_one_duplicate_row_saves_nothing_new(conn):
+    create_tables(conn)
+    conn.execute(
+        "INSERT INTO readings (sensor_id, metric, value, timestamp) "
+        "VALUES ('sensor-1', 'pressure_bar', 3.2, %s)",
+        (MEASURED_AT,),
+    )
+    reading = {
+        "sensor_id": "sensor-1",
+        "timestamp": MEASURED_AT,
+        "pressure_bar": 3.2,
+        "temperature_c": 21.5,
+    }
+
+    assert save_reading(conn, reading) is False
+
+    # Only the original row is left; the temperature row was rolled back
+    assert conn.execute("SELECT metric FROM readings").fetchall() == [("pressure_bar",)]
+
+
 def test_unique_index_blocks_duplicate_row(conn):
     create_tables(conn)
     insert = (

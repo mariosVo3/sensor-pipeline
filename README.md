@@ -60,6 +60,21 @@ docker compose up -d postgres   # the database tests need it
 pytest
 ```
 
+## Removing old duplicates
+
+The `readings` table has a unique index on `(sensor_id, metric, timestamp)`. If a
+database already holds duplicates from before the index existed, creating the index
+fails. Delete the extra rows first (this keeps the oldest row of each group):
+
+```sql
+DELETE FROM readings a
+USING readings b
+WHERE a.sensor_id = b.sensor_id
+  AND a.metric = b.metric
+  AND a.timestamp = b.timestamp
+  AND a.id > b.id;
+```
+
 ## How the agents work
 
 - Label an issue `agent:builder` and the builder agent implements it and opens a PR.

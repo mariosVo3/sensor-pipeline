@@ -10,6 +10,7 @@ Run it (start Kafka and PostgreSQL first, and run `python -m app.db` once):
 
 import json
 
+import psycopg
 from confluent_kafka import Consumer
 
 from app.db import get_connection, reading_exists, save_alert, save_reading
@@ -21,13 +22,31 @@ SAVED = "saved"
 ALERT = "alert"
 
 
+def clean(text: str) -> str:
+    """Postgres TEXT cannot hold NUL characters, so replace them."""
+    return text.replace("\x00", "\ufffd")
+
+
 def handle_message(conn, raw: bytes) -> str:
     """Check one message and save it as a reading or as an alert.
 
-    Returns SAVED or ALERT. Nothing is committed here: the caller commits.
+    Returns SAVED or ALERT. The caller commits. If the database rejects the
+    message, the open transaction is rolled back (so call this once per
+    transaction) and the message is saved as an alert instead.
     """
+    try:
+        return _handle(conn, raw)
+    except psycopg.Error:
+        # Python and Postgres can disagree on what is valid (e.g. odd timestamps)
+        conn.rollback()
+        text = clean(raw.decode("utf-8", errors="replace"))
+        save_alert(conn, None, "database rejected message", text)
+        return ALERT
+
+
+def _handle(conn, raw: bytes) -> str:
     # Keep the original text for alerts (replace bytes that are not valid text)
-    text = raw.decode("utf-8", errors="replace")
+    text = clean(raw.decode("utf-8", errors="replace"))
 
     # 1. Is it JSON at all?
     try:
@@ -38,8 +57,7 @@ def handle_message(conn, raw: bytes) -> str:
 
     # Only keep the sensor id for the alert if it is really a string
     sensor_id = reading.get("sensor_id") if isinstance(reading, dict) else None
-    if not isinstance(sensor_id, str):
-        sensor_id = None
+    sensor_id = clean(sensor_id) if isinstance(sensor_id, str) else None
 
     # 2. Is the content valid?
     problems = validate_reading(reading)

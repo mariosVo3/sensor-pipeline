@@ -40,9 +40,13 @@ def validate_reading(reading: dict) -> list[str]:
         problems.append("timestamp is missing")
     else:
         try:
-            datetime.fromisoformat(timestamp)
+            parsed = datetime.fromisoformat(timestamp)
         except (TypeError, ValueError):
             problems.append("timestamp is not a valid ISO 8601 date")
+        else:
+            # Without a timezone, Postgres would guess one from its own settings
+            if parsed.tzinfo is None:
+                problems.append("timestamp has no timezone")
 
     problems += check_number(reading, "pressure_bar", PRESSURE_RANGE_BAR)
     problems += check_number(reading, "temperature_c", TEMPERATURE_RANGE_C)

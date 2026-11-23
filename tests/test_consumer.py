@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.consumer import ALERT, SAVED, handle_message
+from app.consumer import ALERT, SAVED, handle_message, run
 from app.db import create_tables, get_connection
 
 GOOD = {
@@ -15,11 +15,12 @@ GOOD = {
 
 @pytest.fixture
 def conn():
-    """A connection with fresh tables. Every change is rolled back after the test."""
+    """A connection with fresh tables (dropped and recreated for each test)."""
     conn = get_connection()
     conn.execute("DROP TABLE IF EXISTS readings")
     conn.execute("DROP TABLE IF EXISTS alerts")
     create_tables(conn)
+    conn.commit()  # so a rollback inside handle_message keeps the tables
     yield conn
     conn.rollback()
     conn.close()
@@ -36,7 +37,13 @@ def alert_reasons(conn):
 def test_good_reading_is_saved(conn):
     assert handle_message(conn, json.dumps(GOOD).encode()) == SAVED
 
-    assert count(conn, "readings") == 2  # one row per metric
+    rows = conn.execute(
+        "SELECT sensor_id, metric, value FROM readings ORDER BY metric"
+    ).fetchall()
+    assert rows == [
+        ("sensor-1", "pressure_bar", 50.0),
+        ("sensor-1", "temperature_c", 20.0),
+    ]
     assert count(conn, "alerts") == 0
 
 
@@ -78,3 +85,79 @@ def test_duplicate_raises_alert(conn):
 
     assert alert_reasons(conn) == ["duplicate"]
     assert count(conn, "readings") == 2  # the second copy was not saved
+
+
+def test_naive_timestamp_raises_alert(conn):
+    bad = {**GOOD, "timestamp": "2026-11-23T10:00:00"}
+
+    assert handle_message(conn, json.dumps(bad).encode()) == ALERT
+
+    assert alert_reasons(conn) == ["timestamp has no timezone"]
+    assert count(conn, "readings") == 0
+
+
+def test_not_a_number_values_raise_alert(conn):
+    raw = b'{"sensor_id": "s", "timestamp": "2026-11-23T10:00:00+00:00", "pressure_bar": "5", "temperature_c": NaN}'
+
+    assert handle_message(conn, raw) == ALERT
+
+    assert "pressure_bar is not a number; temperature_c is NaN" in alert_reasons(conn)[0]
+
+
+def test_database_rejection_becomes_alert(conn):
+    bad = {**GOOD, "sensor_id": "bad\u0000id"}  # passes validation, Postgres refuses
+
+    assert handle_message(conn, json.dumps(bad).encode()) == ALERT
+
+    assert alert_reasons(conn) == ["database rejected message"]
+    assert count(conn, "readings") == 0
+    # The connection is still usable afterwards
+    assert handle_message(conn, json.dumps(GOOD).encode()) == SAVED
+
+
+def test_raw_nul_byte_alert_is_saved(conn):
+    assert handle_message(conn, b"{\x00") == ALERT
+
+    assert alert_reasons(conn) == ["not valid JSON"]
+
+
+class FakeMessage:
+    def __init__(self, value=None, error=None):
+        self._value = value
+        self._error = error
+
+    def value(self):
+        return self._value
+
+    def error(self):
+        return self._error
+
+
+class FakeConsumer:
+    """poll() returns the given messages, then raises KeyboardInterrupt."""
+
+    def __init__(self, messages):
+        self.messages = list(messages)
+
+    def poll(self, timeout):
+        if not self.messages:
+            raise KeyboardInterrupt
+        return self.messages.pop(0)
+
+
+def test_run_counts_commits_and_skips_kafka_errors(conn):
+    good = json.dumps(GOOD).encode()
+    consumer = FakeConsumer(
+        [
+            None,
+            FakeMessage(error="boom"),
+            FakeMessage(good),
+            FakeMessage(good),  # duplicate
+            FakeMessage(b"nope"),
+        ]
+    )
+
+    assert run(consumer, conn) == {SAVED: 1, ALERT: 2}
+
+    assert count(conn, "readings") == 2
+    assert count(conn, "alerts") == 2

@@ -6,12 +6,12 @@ import pytest
 
 import app.producer as producer_module
 from app.producer import (
+    DeliveryReport,
     PRESSURE_RANGE_BAR,
     SENSOR_IDS,
     TEMPERATURE_RANGE_C,
     make_reading,
     parse_args,
-    report_delivery,
     run,
     send_reading,
 )
@@ -56,7 +56,7 @@ def test_send_reading_sends_json_keyed_by_sensor():
     producer = FakeProducer()
     reading = make_reading("sensor-2", random.Random(42), bad_rate=0)
 
-    send_reading(producer, "sensor-readings", reading)
+    send_reading(producer, "sensor-readings", reading, DeliveryReport())
 
     [message] = producer.messages
     assert message["topic"] == "sensor-readings"
@@ -67,7 +67,14 @@ def test_send_reading_sends_json_keyed_by_sensor():
 def test_run_sends_count_readings_one_sensor_after_another():
     producer = FakeProducer()
 
-    sent = run(producer, "sensor-readings", count=4, interval=0, rng=random.Random(42))
+    sent = run(
+        producer,
+        "sensor-readings",
+        count=4,
+        interval=0,
+        rng=random.Random(42),
+        report=DeliveryReport(),
+    )
 
     assert sent == 4
     keys = [message["key"] for message in producer.messages]
@@ -78,18 +85,25 @@ def test_run_does_not_sleep_after_the_last_reading(monkeypatch):
     sleeps = []
     monkeypatch.setattr(producer_module.time, "sleep", sleeps.append)
 
-    run(FakeProducer(), "sensor-readings", count=3, interval=5, rng=random.Random(42))
+    run(
+        FakeProducer(),
+        "sensor-readings",
+        count=3,
+        interval=5,
+        rng=random.Random(42),
+        report=DeliveryReport(),
+    )
 
     assert sleeps == [5, 5]
 
 
-def test_report_delivery_counts_failures(monkeypatch):
-    monkeypatch.setattr(producer_module, "failed_deliveries", 0)
+def test_delivery_report_counts_failures():
+    report = DeliveryReport()
 
-    report_delivery(None, None)
-    report_delivery("broker down", None)
+    report(None, None)
+    report("broker down", None)
 
-    assert producer_module.failed_deliveries == 1
+    assert report.failed == 1
 
 
 @pytest.mark.parametrize(

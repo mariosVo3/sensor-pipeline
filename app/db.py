@@ -41,8 +41,10 @@ METRICS = ["pressure_bar", "temperature_c"]
 
 
 def get_connection() -> psycopg.Connection:
-    """Open a new connection to PostgreSQL."""
-    return psycopg.connect(DATABASE_URL)
+    """Open a new connection to PostgreSQL (fails after DATABASE_CONNECT_TIMEOUT seconds)."""
+    # Give up after a few seconds instead of waiting forever if the database is down
+    timeout = int(os.environ.get("DATABASE_CONNECT_TIMEOUT", "5"))
+    return psycopg.connect(DATABASE_URL, connect_timeout=timeout)
 
 
 def create_tables(conn: psycopg.Connection) -> None:

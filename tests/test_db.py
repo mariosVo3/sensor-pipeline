@@ -1,5 +1,7 @@
+import time
 from datetime import datetime, timezone
 
+import psycopg
 import pytest
 
 from app.db import (
@@ -175,3 +177,12 @@ def test_reading_exists(conn):
         reading_exists(conn, "sensor-1", datetime(2026, 1, 1, tzinfo=timezone.utc))
         is False
     )
+
+
+def test_get_connection_fails_fast_when_database_is_down(monkeypatch):
+    # Nothing listens on port 1, so connecting must fail quickly instead of hanging
+    monkeypatch.setattr("app.db.DATABASE_URL", "postgresql://u:p@localhost:1/x")
+    start = time.monotonic()
+    with pytest.raises(psycopg.OperationalError):
+        get_connection()
+    assert time.monotonic() - start < 10

@@ -14,7 +14,8 @@ def check_number(reading: dict, name: str, low_high: tuple[float, float]) -> lis
     # bool is a kind of int in Python, but True/False is not a real measurement
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return [f"{name} is not a number"]
-    if math.isnan(value):
+    # Only floats can be NaN (and math.isnan fails on huge ints)
+    if isinstance(value, float) and math.isnan(value):
         return [f"{name} is NaN"]
     low, high = low_high
     if not low <= value <= high:

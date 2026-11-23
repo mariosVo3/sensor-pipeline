@@ -179,3 +179,15 @@ def test_connection_errors_are_not_swallowed(conn, monkeypatch):
 
     with pytest.raises(psycopg.OperationalError):
         handle_message(conn, json.dumps(GOOD).encode())
+
+
+def test_huge_integer_raises_alert(conn):
+    raw = ('{"sensor_id": "s", "timestamp": "2026-11-23T10:00:00+00:00", '
+           '"pressure_bar": 1' + "0" * 400 + ', "temperature_c": 20}').encode()
+    assert handle_message(conn, raw) == ALERT
+    assert "pressure_bar is out of range" in alert_reasons(conn)[0]
+
+
+def test_deeply_nested_json_raises_alert(conn):
+    assert handle_message(conn, b"[" * 100000) == ALERT
+    assert alert_reasons(conn) == ["not valid JSON"]

@@ -42,16 +42,21 @@ def handle_message(conn, raw: bytes) -> str:
         # they are not caught here and stop the consumer.
         conn.rollback()
         text = clean(raw.decode("utf-8", errors="replace"))
-        save_alert(conn, _sensor_id(raw), "database rejected message", text)
+        try:
+            sensor_id = _sensor_id(_parse(raw))
+        except (ValueError, RecursionError):
+            sensor_id = None
+        save_alert(conn, sensor_id, "database rejected message", text)
         return ALERT
 
 
-def _sensor_id(raw: bytes) -> str | None:
-    """The sensor id of a message, or None if it has no usable one."""
-    try:
-        reading = json.loads(raw)
-    except ValueError:
-        return None
+def _parse(raw: bytes):
+    """Parse JSON. Raises ValueError (or RecursionError for very deep nesting)."""
+    return json.loads(raw)
+
+
+def _sensor_id(reading) -> str | None:
+    """The sensor id of a parsed message, or None if it has no usable one."""
     sensor_id = reading.get("sensor_id") if isinstance(reading, dict) else None
     return clean(sensor_id) if isinstance(sensor_id, str) else None
 
@@ -62,13 +67,13 @@ def _handle(conn, raw: bytes) -> str:
 
     # 1. Is it JSON at all?
     try:
-        reading = json.loads(raw)
-    except ValueError:  # also covers bytes that are not valid UTF-8
+        reading = _parse(raw)
+    except (ValueError, RecursionError):  # ValueError also covers bad UTF-8
         save_alert(conn, None, "not valid JSON", text)
         return ALERT
 
     # Only keep the sensor id for the alert if it is really a string
-    sensor_id = _sensor_id(raw)
+    sensor_id = _sensor_id(reading)
 
     # 2. Is the content valid?
     problems = validate_reading(reading)

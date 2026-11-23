@@ -36,6 +36,13 @@ CREATE INDEX IF NOT EXISTS readings_sensor_id_timestamp_idx
 ON readings (sensor_id, timestamp)
 """
 
+# The database refuses a second row for the same sensor, metric and timestamp,
+# even if two consumers try to insert it at the same moment
+CREATE_READINGS_UNIQUE_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS readings_sensor_id_metric_timestamp_key
+ON readings (sensor_id, metric, timestamp)
+"""
+
 # The two numbers in a producer reading that we store as rows
 METRICS = ["pressure_bar", "temperature_c"]
 
@@ -62,10 +69,19 @@ def create_tables(conn: psycopg.Connection) -> None:
     conn.execute(CREATE_READINGS_TABLE)
     conn.execute(CREATE_ALERTS_TABLE)
     conn.execute(CREATE_READINGS_INDEX)
+    conn.execute(CREATE_READINGS_UNIQUE_INDEX)
 
 
-def save_reading(conn: psycopg.Connection, reading: dict) -> None:
+class _DuplicateReading(Exception):
+    """Raised inside save_reading() to roll back a partly duplicate reading."""
+
+
+def save_reading(conn: psycopg.Connection, reading: dict) -> bool:
     """Save one producer reading as two rows: one per metric.
+
+    Returns True if the rows were saved, or False if the reading was a duplicate
+    (the unique index blocked an insert). If only some rows were duplicates, the rows
+    that did go in are rolled back, so a reading is saved completely or not at all.
 
     The caller must check the reading first (keys present, numbers valid) and call
     save_alert() for bad input. A missing key raises KeyError before anything is inserted.
@@ -79,11 +95,26 @@ def save_reading(conn: psycopg.Connection, reading: dict) -> None:
         (reading["sensor_id"], metric, reading[metric], reading["timestamp"])
         for metric in METRICS
     ]
-    for row in rows:
-        conn.execute(
-            "INSERT INTO readings (sensor_id, metric, value, timestamp) VALUES (%s, %s, %s, %s)",
-            row,
-        )
+    try:
+        # Inside an open transaction this is a savepoint, so a rollback undoes only
+        # this reading's rows, not the caller's other work.
+        with conn.transaction():
+            inserted = 0
+            for row in rows:
+                # The conflict target matches the unique index; other errors still raise
+                cursor = conn.execute(
+                    "INSERT INTO readings (sensor_id, metric, value, timestamp) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (sensor_id, metric, timestamp) DO NOTHING",
+                    row,
+                )
+                inserted += cursor.rowcount  # 1 if inserted, 0 if skipped
+            if inserted != len(rows):
+                # Partial duplicate: roll back the rows that did go in
+                raise _DuplicateReading
+    except _DuplicateReading:
+        return False
+    return True
 
 
 def save_alert(

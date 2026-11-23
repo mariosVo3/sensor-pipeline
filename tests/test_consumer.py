@@ -87,6 +87,18 @@ def test_duplicate_raises_alert(conn):
     assert count(conn, "readings") == 2  # the second copy was not saved
 
 
+def test_duplicate_caught_by_database_raises_alert(conn, monkeypatch):
+    # Simulate a race: the pre-check says "new", but the database finds a duplicate
+    raw = json.dumps(GOOD).encode()
+    handle_message(conn, raw)
+    monkeypatch.setattr("app.consumer.reading_exists", lambda *args: False)
+
+    assert handle_message(conn, raw) == ALERT
+
+    assert alert_reasons(conn) == ["duplicate"]
+    assert count(conn, "readings") == 2
+
+
 def test_naive_timestamp_raises_alert(conn):
     bad = {**GOOD, "timestamp": "2026-11-23T10:00:00"}
 

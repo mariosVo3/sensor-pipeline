@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import psycopg
 
@@ -52,25 +53,43 @@ def create_tables(conn: psycopg.Connection) -> None:
 
 
 def save_reading(conn: psycopg.Connection, reading: dict) -> None:
-    """Save one producer reading as two rows: one per metric."""
-    for metric in METRICS:
+    """Save one producer reading as two rows: one per metric.
+
+    The caller must check the reading first (keys present, numbers valid) and call
+    save_alert() for bad input. A missing key raises KeyError before anything is inserted.
+
+    Nothing is committed here. Both rows are in one transaction, so they are saved
+    together or not at all, but the caller must call conn.commit() (or use
+    `with get_connection() as conn`) or the rows are lost.
+    """
+    # Read every value first so a missing key cannot leave only one row inserted
+    rows = [
+        (reading["sensor_id"], metric, reading[metric], reading["timestamp"])
+        for metric in METRICS
+    ]
+    for row in rows:
         conn.execute(
             "INSERT INTO readings (sensor_id, metric, value, timestamp) VALUES (%s, %s, %s, %s)",
-            (reading["sensor_id"], metric, reading[metric], reading["timestamp"]),
+            row,
         )
 
 
 def save_alert(
     conn: psycopg.Connection, sensor_id: str | None, reason: str, raw: str
 ) -> None:
-    """Save a message that could not be used. `raw` is the original message."""
+    """Save a message that could not be used. `raw` is the original message.
+
+    Like save_reading(), this does not commit.
+    """
     conn.execute(
         "INSERT INTO alerts (sensor_id, reason, raw) VALUES (%s, %s, %s)",
         (sensor_id, reason, raw),
     )
 
 
-def reading_exists(conn: psycopg.Connection, sensor_id: str, timestamp) -> bool:
+def reading_exists(
+    conn: psycopg.Connection, sensor_id: str, timestamp: datetime | str
+) -> bool:
     """True if readings already has a row for this sensor and timestamp."""
     row = conn.execute(
         "SELECT 1 FROM readings WHERE sensor_id = %s AND timestamp = %s LIMIT 1",

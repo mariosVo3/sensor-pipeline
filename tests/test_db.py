@@ -10,6 +10,8 @@ from app.db import (
     save_reading,
 )
 
+MEASURED_AT = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
+
 
 @pytest.fixture
 def conn():
@@ -19,6 +21,7 @@ def conn():
     # Without this, a table left over from `python -m app.db` would hide a broken create_tables()
     conn.execute("DROP TABLE IF EXISTS readings")
     conn.execute("DROP TABLE IF EXISTS alerts")
+    # No commit on purpose: this connection sees its own drops, and the rollback undoes them
     yield conn
     conn.rollback()
     conn.close()
@@ -59,21 +62,17 @@ def test_create_tables_twice_is_safe(conn):
 
 def test_can_save_and_read_a_reading(conn):
     create_tables(conn)
-    measured_at = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
 
     conn.execute(
         "INSERT INTO readings (sensor_id, metric, value, timestamp) VALUES (%s, %s, %s, %s)",
-        ("sensor-1", "pressure", 3.2, measured_at),
+        ("sensor-1", "pressure_bar", 3.2, MEASURED_AT),
     )
     row = conn.execute(
         "SELECT sensor_id, metric, value, timestamp FROM readings WHERE sensor_id = %s",
         ("sensor-1",),
     ).fetchone()
 
-    assert row == ("sensor-1", "pressure", 3.2, measured_at)
-
-
-MEASURED_AT = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
+    assert row == ("sensor-1", "pressure_bar", 3.2, MEASURED_AT)
 
 
 def test_create_tables_makes_alerts_table(conn):
@@ -101,7 +100,8 @@ def test_create_tables_makes_readings_index(conn):
     create_tables(conn)
 
     rows = conn.execute(
-        "SELECT indexdef FROM pg_indexes WHERE tablename = 'readings' AND indexdef LIKE '%(sensor_id, \"timestamp\")%'"
+        "SELECT indexname FROM pg_indexes "
+        "WHERE tablename = 'readings' AND indexname = 'readings_sensor_id_timestamp_idx'"
     ).fetchall()
 
     assert len(rows) == 1
@@ -111,6 +111,7 @@ def test_save_reading_makes_two_rows(conn):
     create_tables(conn)
     reading = {
         "sensor_id": "sensor-1",
+        # The producer sends the timestamp as an ISO string
         "timestamp": MEASURED_AT.isoformat(),
         "pressure_bar": 3.2,
         "temperature_c": 21.5,
@@ -125,6 +126,16 @@ def test_save_reading_makes_two_rows(conn):
         ("sensor-1", "pressure_bar", 3.2, MEASURED_AT),
         ("sensor-1", "temperature_c", 21.5, MEASURED_AT),
     ]
+
+
+def test_save_reading_with_missing_key_saves_nothing(conn):
+    create_tables(conn)
+    reading = {"sensor_id": "sensor-1", "timestamp": MEASURED_AT, "pressure_bar": 3.2}
+
+    with pytest.raises(KeyError):
+        save_reading(conn, reading)
+
+    assert conn.execute("SELECT count(*) FROM readings").fetchone() == (0,)
 
 
 def test_save_alert_stores_a_row(conn):
@@ -151,6 +162,7 @@ def test_reading_exists(conn):
         conn,
         {
             "sensor_id": "sensor-1",
+            # A datetime also works; reading_exists() is tested with one too
             "timestamp": MEASURED_AT,
             "pressure_bar": 3.2,
             "temperature_c": 21.5,

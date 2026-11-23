@@ -32,6 +32,13 @@ curl http://localhost:8000/health   # {"status":"ok"}
 
 API docs (Swagger UI): http://localhost:8000/docs
 
+Send fake readings to Kafka (in the virtualenv from below):
+
+```bash
+docker compose up -d kafka
+python -m app.producer --count 10 --interval 0.5   # leave out --count to run until Ctrl+C
+```
+
 Tests and linter locally:
 
 ```bash
@@ -45,7 +52,7 @@ pytest
 ## Roadmap
 
 - [x] Project skeleton: FastAPI, Docker Compose, pytest, CI
-- [ ] Fake sensor producer that sends readings to Kafka
+- [x] Fake sensor producer that sends readings to Kafka
 - [ ] Consumer that validates readings (missing values, out-of-range numbers, duplicates)
 - [ ] Save readings in PostgreSQL
 - [ ] API endpoints: `GET /sensors/{id}/readings`, `GET /alerts`

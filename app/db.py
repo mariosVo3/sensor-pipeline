@@ -43,7 +43,17 @@ METRICS = ["pressure_bar", "temperature_c"]
 def get_connection() -> psycopg.Connection:
     """Open a new connection to PostgreSQL (fails after DATABASE_CONNECT_TIMEOUT seconds)."""
     # Give up after a few seconds instead of waiting forever if the database is down
-    timeout = int(os.environ.get("DATABASE_CONNECT_TIMEOUT", "5"))
+    # DATABASE_URL is read once when the module is imported; the timeout is read on every call
+    raw = os.environ.get("DATABASE_CONNECT_TIMEOUT", "5")
+    try:
+        timeout = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"DATABASE_CONNECT_TIMEOUT must be a whole number of seconds, got {raw!r}"
+        ) from None
+    if timeout < 1:
+        # libpq treats 0 or less as "wait forever", which is the hang we want to avoid
+        raise ValueError(f"DATABASE_CONNECT_TIMEOUT must be 1 or more, got {timeout}")
     return psycopg.connect(DATABASE_URL, connect_timeout=timeout)
 
 

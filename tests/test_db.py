@@ -1,7 +1,5 @@
-import time
 from datetime import datetime, timezone
 
-import psycopg
 import pytest
 
 from app.db import (
@@ -179,10 +177,32 @@ def test_reading_exists(conn):
     )
 
 
-def test_get_connection_fails_fast_when_database_is_down(monkeypatch):
-    # Nothing listens on port 1, so connecting must fail quickly instead of hanging
-    monkeypatch.setattr("app.db.DATABASE_URL", "postgresql://u:p@localhost:1/x")
-    start = time.monotonic()
-    with pytest.raises(psycopg.OperationalError):
+def _fake_connect(calls):
+    def fake(url, **kwargs):
+        calls.append(kwargs)
+        return "connection"
+
+    return fake
+
+
+def test_get_connection_uses_default_timeout(monkeypatch):
+    calls = []
+    monkeypatch.delenv("DATABASE_CONNECT_TIMEOUT", raising=False)
+    monkeypatch.setattr("app.db.psycopg.connect", _fake_connect(calls))
+    get_connection()
+    assert calls == [{"connect_timeout": 5}]
+
+
+def test_get_connection_honours_timeout_env_var(monkeypatch):
+    calls = []
+    monkeypatch.setenv("DATABASE_CONNECT_TIMEOUT", "2")
+    monkeypatch.setattr("app.db.psycopg.connect", _fake_connect(calls))
+    get_connection()
+    assert calls == [{"connect_timeout": 2}]
+
+
+@pytest.mark.parametrize("value", ["abc", "2.5", "0", "-1"])
+def test_get_connection_rejects_bad_timeout(monkeypatch, value):
+    monkeypatch.setenv("DATABASE_CONNECT_TIMEOUT", value)
+    with pytest.raises(ValueError, match="DATABASE_CONNECT_TIMEOUT"):
         get_connection()
-    assert time.monotonic() - start < 10

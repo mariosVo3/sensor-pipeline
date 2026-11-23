@@ -27,19 +27,22 @@ def clean(text: str) -> str:
     return text.replace("\x00", "\ufffd")
 
 
-def handle_message(conn, raw: bytes) -> str:
+def handle_message(conn, raw: bytes | None) -> str:
     """Check one message and save it as a reading or as an alert.
 
     Returns SAVED or ALERT. The caller commits. If the database rejects the
     message, the open transaction is rolled back (so call this once per
     transaction) and the message is saved as an alert instead.
     """
+    # Kafka gives None for a message with no value
+    if raw is None:
+        save_alert(conn, None, "empty message", "")
+        return ALERT
+
     try:
         return _handle(conn, raw)
     except (psycopg.DataError, psycopg.IntegrityError):
-        # Python and Postgres can disagree on what is valid (e.g. odd timestamps).
-        # Other errors (e.g. a lost connection) are not the message's fault, so
-        # they are not caught here and stop the consumer.
+        # Python and Postgres can disagree on what is valid (e.g. odd timestamps)
         conn.rollback()
         text = clean(raw.decode("utf-8", errors="replace"))
         try:
@@ -47,6 +50,15 @@ def handle_message(conn, raw: bytes) -> str:
         except (ValueError, RecursionError):
             sensor_id = None
         save_alert(conn, sensor_id, "database rejected message", text)
+        return ALERT
+    except (psycopg.OperationalError, psycopg.InterfaceError):
+        # A lost connection is not the message's fault: stop the consumer
+        raise
+    except Exception as err:
+        # Safety net: no other bad message may crash the consumer
+        conn.rollback()
+        text = clean(raw.decode("utf-8", errors="replace"))
+        save_alert(conn, None, f"could not process message: {type(err).__name__}", text)
         return ALERT
 
 

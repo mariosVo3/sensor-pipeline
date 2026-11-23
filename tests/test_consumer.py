@@ -191,3 +191,31 @@ def test_huge_integer_raises_alert(conn):
 def test_deeply_nested_json_raises_alert(conn):
     assert handle_message(conn, b"[" * 100000) == ALERT
     assert alert_reasons(conn) == ["not valid JSON"]
+
+
+def test_empty_message_raises_alert(conn):
+    assert handle_message(conn, None) == ALERT
+    assert alert_reasons(conn) == ["empty message"]
+
+
+def test_unexpected_error_becomes_alert(conn, monkeypatch):
+    def boom(reading):
+        raise RuntimeError("surprise")
+
+    monkeypatch.setattr("app.consumer.validate_reading", boom)
+
+    assert handle_message(conn, json.dumps(GOOD).encode()) == ALERT
+    assert alert_reasons(conn) == ["could not process message: RuntimeError"]
+    assert count(conn, "readings") == 0
+
+
+def test_interface_errors_are_not_swallowed(conn, monkeypatch):
+    import psycopg
+
+    def boom(reading):
+        raise psycopg.InterfaceError("connection closed")
+
+    monkeypatch.setattr("app.consumer.validate_reading", boom)
+
+    with pytest.raises(psycopg.InterfaceError):
+        handle_message(conn, json.dumps(GOOD).encode())

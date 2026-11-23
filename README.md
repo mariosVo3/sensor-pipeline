@@ -46,6 +46,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 ruff check .
+docker compose up -d postgres   # the database tests need it
 pytest
 ```
 

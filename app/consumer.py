@@ -36,12 +36,24 @@ def handle_message(conn, raw: bytes) -> str:
     """
     try:
         return _handle(conn, raw)
-    except psycopg.Error:
-        # Python and Postgres can disagree on what is valid (e.g. odd timestamps)
+    except (psycopg.DataError, psycopg.IntegrityError):
+        # Python and Postgres can disagree on what is valid (e.g. odd timestamps).
+        # Other errors (e.g. a lost connection) are not the message's fault, so
+        # they are not caught here and stop the consumer.
         conn.rollback()
         text = clean(raw.decode("utf-8", errors="replace"))
-        save_alert(conn, None, "database rejected message", text)
+        save_alert(conn, _sensor_id(raw), "database rejected message", text)
         return ALERT
+
+
+def _sensor_id(raw: bytes) -> str | None:
+    """The sensor id of a message, or None if it has no usable one."""
+    try:
+        reading = json.loads(raw)
+    except ValueError:
+        return None
+    sensor_id = reading.get("sensor_id") if isinstance(reading, dict) else None
+    return clean(sensor_id) if isinstance(sensor_id, str) else None
 
 
 def _handle(conn, raw: bytes) -> str:
@@ -56,8 +68,7 @@ def _handle(conn, raw: bytes) -> str:
         return ALERT
 
     # Only keep the sensor id for the alert if it is really a string
-    sensor_id = reading.get("sensor_id") if isinstance(reading, dict) else None
-    sensor_id = clean(sensor_id) if isinstance(sensor_id, str) else None
+    sensor_id = _sensor_id(raw)
 
     # 2. Is the content valid?
     problems = validate_reading(reading)
@@ -89,6 +100,8 @@ def run(consumer: Consumer, conn) -> dict[str, int]:
             outcome = handle_message(conn, msg.value())
             # Commit after every message so one bad message cannot undo the others
             conn.commit()
+            # Only now tell Kafka the message is done (at-least-once delivery)
+            consumer.commit(message=msg)
             counts[outcome] += 1
     except KeyboardInterrupt:
         print("stopping")
@@ -101,6 +114,7 @@ def main() -> None:
             "bootstrap.servers": BOOTSTRAP_SERVERS,
             "group.id": "sensor-consumer",
             "auto.offset.reset": "earliest",  # start from the first message
+            "enable.auto.commit": False,  # we commit offsets after the DB commit
         }
     )
     consumer.subscribe([TOPIC])

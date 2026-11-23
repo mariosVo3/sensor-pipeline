@@ -110,6 +110,7 @@ def test_database_rejection_becomes_alert(conn):
     assert handle_message(conn, json.dumps(bad).encode()) == ALERT
 
     assert alert_reasons(conn) == ["database rejected message"]
+    assert conn.execute("SELECT sensor_id FROM alerts").fetchone()[0] == "bad\ufffdid"
     assert count(conn, "readings") == 0
     # The connection is still usable afterwards
     assert handle_message(conn, json.dumps(GOOD).encode()) == SAVED
@@ -138,6 +139,10 @@ class FakeConsumer:
 
     def __init__(self, messages):
         self.messages = list(messages)
+        self.committed = []
+
+    def commit(self, message):
+        self.committed.append(message)
 
     def poll(self, timeout):
         if not self.messages:
@@ -161,3 +166,16 @@ def test_run_counts_commits_and_skips_kafka_errors(conn):
 
     assert count(conn, "readings") == 2
     assert count(conn, "alerts") == 2
+    assert len(consumer.committed) == 3  # not committed for the Kafka error
+
+
+def test_connection_errors_are_not_swallowed(conn, monkeypatch):
+    import psycopg
+
+    def boom(*args):
+        raise psycopg.OperationalError("connection lost")
+
+    monkeypatch.setattr("app.consumer.save_reading", boom)
+
+    with pytest.raises(psycopg.OperationalError):
+        handle_message(conn, json.dumps(GOOD).encode())

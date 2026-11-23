@@ -16,6 +16,23 @@ jobs:
     if: github.event.label.name == 'agent:fixer'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # A real PostgreSQL, so the agent can run the database tests (same as ci.yml)
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sensors
+          POSTGRES_PASSWORD: sensors
+          POSTGRES_DB: sensors
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sensors:sensors@localhost:5432/sensors
     permissions:
       contents: write
       pull-requests: write

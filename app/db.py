@@ -110,6 +110,32 @@ def reading_exists(
     return row is not None
 
 
+def get_readings(conn: psycopg.Connection, sensor_id: str, limit: int) -> list[dict]:
+    """Newest readings for one sensor, newest first. Unknown sensor gives an empty list."""
+    rows = conn.execute(
+        "SELECT metric, value, timestamp FROM readings "
+        "WHERE sensor_id = %s ORDER BY timestamp DESC, id DESC LIMIT %s",
+        (sensor_id, limit),
+    ).fetchall()
+    return [
+        {"metric": metric, "value": value, "timestamp": timestamp}
+        for metric, value, timestamp in rows
+    ]
+
+
+def get_alerts(conn: psycopg.Connection, limit: int) -> list[dict]:
+    """Newest alerts, newest first."""
+    rows = conn.execute(
+        "SELECT sensor_id, reason, raw, created_at FROM alerts "
+        "ORDER BY created_at DESC, id DESC LIMIT %s",
+        (limit,),
+    ).fetchall()
+    return [
+        {"sensor_id": sensor_id, "reason": reason, "raw": raw, "created_at": created_at}
+        for sensor_id, reason, raw, created_at in rows
+    ]
+
+
 if __name__ == "__main__":
     # `python -m app.db` creates the tables once
     with get_connection() as conn:

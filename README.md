@@ -32,6 +32,8 @@ curl http://localhost:8000/health   # {"status":"ok"}
 
 API docs (Swagger UI): http://localhost:8000/docs
 
+The API has no authentication and is for local use only.
+
 Send fake readings to Kafka (in the virtualenv from below):
 
 ```bash
@@ -72,5 +74,5 @@ The workflows live in `.github/workflows/`.
 - [x] Fake sensor producer that sends readings to Kafka
 - [x] Consumer that validates readings (missing values, out-of-range numbers, duplicates)
 - [x] Save readings in PostgreSQL
-- [ ] API endpoints: `GET /sensors/{id}/readings`, `GET /alerts`
+- [x] API endpoints: `GET /sensors/{id}/readings`, `GET /alerts`
 - [x] AI agent workflow: builder and reviewer agents working from GitHub Issues

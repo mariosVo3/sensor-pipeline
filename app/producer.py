@@ -31,6 +31,9 @@ BAD_READING_RATE = 0.05
 
 Reading = dict[str, str | float | None]
 
+# How many messages Kafka told us it could not store
+failed_deliveries = 0
+
 
 def make_reading(
     sensor_id: str, rng: random.Random, bad_rate: float = BAD_READING_RATE
@@ -52,7 +55,9 @@ def make_reading(
 
 def report_delivery(err: KafkaError | None, msg: Message) -> None:
     """Called by Kafka once it has stored the message, or failed to."""
+    global failed_deliveries
     if err is not None:
+        failed_deliveries += 1
         print(f"delivery failed: {err}")
 
 
@@ -83,11 +88,14 @@ def run(
         send_reading(producer, topic, reading)
         print(f"sent {reading}")
         sent += 1
-        time.sleep(interval)
+        # No need to wait after the last reading
+        if count is None or sent < count:
+            time.sleep(interval)
     return sent
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Read --count and --interval from the command line and check them."""
     parser = argparse.ArgumentParser(description="Send fake sensor readings to Kafka.")
     parser.add_argument(
         "--count", type=int, default=None, help="how many readings (default: forever)"
@@ -95,7 +103,16 @@ def main() -> None:
     parser.add_argument(
         "--interval", type=float, default=1.0, help="seconds between readings"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.count is not None and args.count < 1:
+        parser.error("--count must be at least 1")
+    if args.interval < 0:
+        parser.error("--interval cannot be negative")
+    return args
+
+
+def main() -> None:
+    args = parse_args()
 
     producer = Producer({"bootstrap.servers": BOOTSTRAP_SERVERS})
     try:
@@ -103,8 +120,15 @@ def main() -> None:
     except KeyboardInterrupt:
         print("stopping")
     finally:
-        # Wait until Kafka has every message we handed over
-        producer.flush(10)
+        # Wait until Kafka has every message we handed over.
+        # flush() returns how many are still not delivered.
+        undelivered = producer.flush(10)
+
+    if undelivered or failed_deliveries:
+        # SystemExit with a message prints it and exits with code 1
+        raise SystemExit(
+            f"not delivered: {undelivered} still waiting, {failed_deliveries} failed"
+        )
 
 
 if __name__ == "__main__":

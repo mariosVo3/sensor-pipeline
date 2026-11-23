@@ -7,8 +7,11 @@ from app.db import create_tables, get_connection
 
 @pytest.fixture
 def conn():
-    """A database connection that undoes every change after the test."""
+    """A database connection that starts without the readings table
+    and undoes every change after the test."""
     conn = get_connection()
+    # Without this, a table left over from `python -m app.db` would hide a broken create_tables()
+    conn.execute("DROP TABLE IF EXISTS readings")
     yield conn
     conn.rollback()
     conn.close()
@@ -27,7 +30,7 @@ def test_create_tables_makes_readings_table(conn):
         """
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_name = 'readings'
+        WHERE table_schema = current_schema() AND table_name = 'readings'
         ORDER BY ordinal_position
         """
     ).fetchall()
@@ -42,6 +45,7 @@ def test_create_tables_makes_readings_table(conn):
 
 
 def test_create_tables_twice_is_safe(conn):
+    # No assert needed: the test fails if the second call raises an error
     create_tables(conn)
     create_tables(conn)
 

@@ -31,9 +31,6 @@ BAD_READING_RATE = 0.05
 
 Reading = dict[str, str | float | None]
 
-# How many messages Kafka told us it could not store
-failed_deliveries = 0
-
 
 def make_reading(
     sensor_id: str, rng: random.Random, bad_rate: float = BAD_READING_RATE
@@ -53,21 +50,28 @@ def make_reading(
     return reading
 
 
-def report_delivery(err: KafkaError | None, msg: Message) -> None:
-    """Called by Kafka once it has stored the message, or failed to."""
-    global failed_deliveries
-    if err is not None:
-        failed_deliveries += 1
-        print(f"delivery failed: {err}")
+class DeliveryReport:
+    """Counts the messages Kafka told us it could not store."""
+
+    def __init__(self) -> None:
+        self.failed = 0
+
+    def __call__(self, err: KafkaError | None, msg: Message) -> None:
+        """Called by Kafka once it has stored the message, or failed to."""
+        if err is not None:
+            self.failed += 1
+            print(f"delivery failed: {err}")
 
 
-def send_reading(producer: Producer, topic: str, reading: Reading) -> None:
+def send_reading(
+    producer: Producer, topic: str, reading: Reading, report: DeliveryReport
+) -> None:
     """Send one reading to Kafka as JSON. The sensor id is the message key."""
     producer.produce(
         topic,
         key=str(reading["sensor_id"]),
         value=json.dumps(reading),
-        on_delivery=report_delivery,
+        on_delivery=report,
     )
     # Let the client run delivery callbacks for messages already sent
     producer.poll(0)
@@ -79,13 +83,14 @@ def run(
     count: int | None,
     interval: float,
     rng: random.Random,
+    report: DeliveryReport,
 ) -> int:
     """Send `count` readings (forever if None), one sensor after another."""
     sent = 0
     while count is None or sent < count:
         sensor_id = SENSOR_IDS[sent % len(SENSOR_IDS)]
         reading = make_reading(sensor_id, rng)
-        send_reading(producer, topic, reading)
+        send_reading(producer, topic, reading, report)
         print(f"sent {reading}")
         sent += 1
         # No need to wait after the last reading
@@ -115,8 +120,9 @@ def main() -> None:
     args = parse_args()
 
     producer = Producer({"bootstrap.servers": BOOTSTRAP_SERVERS})
+    report = DeliveryReport()
     try:
-        run(producer, TOPIC, args.count, args.interval, random.Random())
+        run(producer, TOPIC, args.count, args.interval, random.Random(), report)
     except KeyboardInterrupt:
         print("stopping")
     finally:
@@ -124,10 +130,10 @@ def main() -> None:
         # flush() returns how many are still not delivered.
         undelivered = producer.flush(10)
 
-    if undelivered or failed_deliveries:
+    if undelivered or report.failed:
         # SystemExit with a message prints it and exits with code 1
         raise SystemExit(
-            f"not delivered: {undelivered} still waiting, {failed_deliveries} failed"
+            f"not delivered: {undelivered} still waiting, {report.failed} failed"
         )
 
 

@@ -50,6 +50,14 @@ docker compose up -d postgres   # the database tests need it
 pytest
 ```
 
+## How the agents work
+
+- Label an issue `agent:builder` and the builder agent implements it and opens a PR.
+- The reviewer agent runs on every PR and leaves review comments.
+- Label a PR `agent:fixer` and the fixer agent applies the review comments.
+
+The workflows live in `.github/workflows/`.
+
 ## Roadmap
 
 - [x] Project skeleton: FastAPI, Docker Compose, pytest, CI
@@ -57,4 +65,4 @@ pytest
 - [ ] Consumer that validates readings (missing values, out-of-range numbers, duplicates)
 - [ ] Save readings in PostgreSQL
 - [ ] API endpoints: `GET /sensors/{id}/readings`, `GET /alerts`
-- [ ] AI agent workflow: builder and reviewer agents working from GitHub Issues
+- [x] AI agent workflow: builder and reviewer agents working from GitHub Issues

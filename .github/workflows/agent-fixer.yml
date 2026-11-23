@@ -13,7 +13,8 @@ concurrency:
 
 jobs:
   fix:
-    if: github.event.label.name == 'agent:fixer'
+    # Only branches in this repo, never forks: only people with write access (and the builder bot) can push those
+    if: github.event.label.name == 'agent:fixer' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # A real PostgreSQL, so the agent can run the database tests (same as ci.yml)
@@ -53,6 +54,9 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Builder PRs are opened by claude[bot], which the action does not count as having
+          # write access, so it would block pytest and git. The `if:` above keeps forks out.
+          restrict_untrusted_prs: false
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -65,7 +69,8 @@ jobs:
             3. Run `ruff check .` and `pytest`. Fix problems until both pass.
             4. Commit and push to the same branch.
             5. Post a short summary with `gh pr comment`: what you fixed and what you did not change and why.
-            6. Remove the label: `gh pr edit ${{ github.event.pull_request.number }} --remove-label agent:fixer`.
+            6. Remove the label: `gh api -X DELETE repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/agent:fixer`
+               (`gh pr edit` fails on this repo because of the retired Projects (classic) API).
           claude_args: |
             --model claude-sonnet-5-5
             --max-turns 40

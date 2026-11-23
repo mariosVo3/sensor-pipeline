@@ -138,3 +138,9 @@ def test_infinity_is_out_of_range(value):
     reading = good_reading()
     reading["pressure_bar"] = value
     assert validate_reading(reading) == ["pressure_bar is out of range (20.0 to 80.0)"]
+
+
+def test_huge_integer_is_out_of_range():
+    reading = good_reading()
+    reading["pressure_bar"] = 10**400
+    assert validate_reading(reading)[0].startswith("pressure_bar is out of range")

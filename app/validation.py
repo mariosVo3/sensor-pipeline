@@ -14,7 +14,8 @@ def check_number(reading: dict, name: str, low_high: tuple[float, float]) -> lis
     # bool is a kind of int in Python, but True/False is not a real measurement
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return [f"{name} is not a number"]
-    if math.isnan(value):
+    # Only floats can be NaN (and math.isnan fails on huge ints)
+    if isinstance(value, float) and math.isnan(value):
         return [f"{name} is NaN"]
     low, high = low_high
     if not low <= value <= high:
@@ -40,9 +41,13 @@ def validate_reading(reading: dict) -> list[str]:
         problems.append("timestamp is missing")
     else:
         try:
-            datetime.fromisoformat(timestamp)
+            parsed = datetime.fromisoformat(timestamp)
         except (TypeError, ValueError):
             problems.append("timestamp is not a valid ISO 8601 date")
+        else:
+            # Without a timezone, Postgres would guess one from its own settings
+            if parsed.tzinfo is None:
+                problems.append("timestamp has no timezone")
 
     problems += check_number(reading, "pressure_bar", PRESSURE_RANGE_BAR)
     problems += check_number(reading, "temperature_c", TEMPERATURE_RANGE_C)

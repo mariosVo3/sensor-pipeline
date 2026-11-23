@@ -39,6 +39,14 @@ docker compose up -d kafka
 python -m app.producer --count 10 --interval 0.5   # leave out --count to run until Ctrl+C
 ```
 
+Read the readings, check them and save them to PostgreSQL (needs Kafka and PostgreSQL):
+
+```bash
+docker compose up -d kafka postgres
+python -m app.db         # creates the tables, only needed once
+python -m app.consumer   # Ctrl+C to stop; prints how many readings and alerts it saw
+```
+
 Tests and linter locally:
 
 ```bash
@@ -62,7 +70,7 @@ The workflows live in `.github/workflows/`.
 
 - [x] Project skeleton: FastAPI, Docker Compose, pytest, CI
 - [x] Fake sensor producer that sends readings to Kafka
-- [ ] Consumer that validates readings (missing values, out-of-range numbers, duplicates)
-- [ ] Save readings in PostgreSQL
+- [x] Consumer that validates readings (missing values, out-of-range numbers, duplicates)
+- [x] Save readings in PostgreSQL
 - [ ] API endpoints: `GET /sensors/{id}/readings`, `GET /alerts`
 - [x] AI agent workflow: builder and reviewer agents working from GitHub Issues

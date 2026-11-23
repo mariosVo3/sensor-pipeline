@@ -24,11 +24,15 @@ def check_number(reading: dict, name: str, low_high: tuple[float, float]) -> lis
 
 def validate_reading(reading: dict) -> list[str]:
     """Return a list of problems. An empty list means the reading is good."""
+    if not isinstance(reading, dict):
+        return ["reading is not a dict"]
+
     problems = []
 
     # sensor_id must be a non-empty string
-    if not reading.get("sensor_id"):
-        problems.append("sensor_id is missing")
+    sensor_id = reading.get("sensor_id")
+    if not isinstance(sensor_id, str) or not sensor_id.strip():
+        problems.append("sensor_id is missing or not a non-empty string")
 
     # timestamp must be a string that is a valid ISO 8601 date
     timestamp = reading.get("timestamp")

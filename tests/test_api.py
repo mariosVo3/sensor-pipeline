@@ -52,14 +52,41 @@ def test_readings_newest_first(client, conn):
     assert timestamps[0] == "2026-11-23T10:00:00Z"
     assert timestamps[-1] == "2026-11-23T09:00:00Z"
     assert {"metric", "value", "timestamp"} == set(response.json()[0])
+    values = {r["metric"]: r["value"] for r in response.json()}
+    assert values == {"pressure_bar": 42.1, "temperature_c": 20.5}
 
 
-def test_readings_limit(client, conn):
+def test_readings_limit_keeps_newest_rows(client, conn):
+    for hour in (9, 10, 11):
+        add_reading(conn, "sensor-1", hour)
+
+    response = client.get("/sensors/sensor-1/readings?limit=2")
+
+    # limit counts rows: 2 rows = both metrics of the newest reading
+    body = response.json()
+    assert len(body) == 2
+    assert {r["timestamp"] for r in body} == {"2026-11-23T11:00:00Z"}
+
+
+def test_readings_limit_one_returns_one_row(client, conn):
     add_reading(conn, "sensor-1", 9)
+    add_reading(conn, "sensor-1", 10)
 
-    response = client.get("/sensors/sensor-1/readings?limit=1")
+    body = client.get("/sensors/sensor-1/readings?limit=1").json()
 
-    assert len(response.json()) == 1
+    assert len(body) == 1
+    assert body[0]["timestamp"] == "2026-11-23T10:00:00Z"
+
+
+def test_readings_limit_1000_is_accepted(client):
+    assert client.get("/sensors/sensor-1/readings?limit=1000").status_code == 200
+
+
+def test_alerts_empty_list(client):
+    response = client.get("/alerts")
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_readings_unknown_sensor_is_empty_list(client):
@@ -92,4 +119,10 @@ def test_alerts_limit(client, conn):
     save_alert(conn, None, "a", "x")
     save_alert(conn, None, "b", "y")
 
-    assert len(client.get("/alerts?limit=1").json()) == 1
+    body = client.get("/alerts?limit=1").json()
+    assert len(body) == 1
+    assert body[0]["reason"] == "b"
+
+
+def test_alerts_limit_1000_is_accepted(client):
+    assert client.get("/alerts?limit=1000").status_code == 200

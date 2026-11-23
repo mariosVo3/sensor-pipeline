@@ -33,14 +33,20 @@ def get_db() -> Iterator[psycopg.Connection]:
         conn.close()
 
 
-# Shared by both endpoints: how many rows to return (1 to 1000, default 100)
+# Annotated attaches extra info to a type. These aliases are shortcuts used by both endpoints:
+# Limit = an int that must be 1 to 1000 (the default of 100 is set in each function signature)
+# Db = a psycopg connection that FastAPI opens per request through get_db
 Limit = Annotated[int, Query(ge=1, le=1000)]
 Db = Annotated[psycopg.Connection, Depends(get_db)]
 
 
 @app.get("/sensors/{sensor_id}/readings")
 def sensor_readings(sensor_id: str, conn: Db, limit: Limit = 100) -> list[dict]:
-    """Newest readings for one sensor, newest first."""
+    """Newest readings for one sensor, newest first.
+
+    `limit` counts rows, not readings. Each reading is stored as two rows (one per metric),
+    so limit=100 returns about 50 readings, and limit=1 can return half a reading.
+    """
     return get_readings(conn, sensor_id, limit)
 
 

@@ -32,6 +32,8 @@ curl http://localhost:8000/health   # {"status":"ok"}
 
 API docs (Swagger UI): http://localhost:8000/docs
 
+The API has no authentication and is for local use only.
+
 Send fake readings to Kafka (in the virtualenv from below):
 
 ```bash

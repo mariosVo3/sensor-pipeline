@@ -175,3 +175,34 @@ def test_reading_exists(conn):
         reading_exists(conn, "sensor-1", datetime(2026, 1, 1, tzinfo=timezone.utc))
         is False
     )
+
+
+def _fake_connect(calls):
+    def fake(url, **kwargs):
+        calls.append(kwargs)
+        return "connection"
+
+    return fake
+
+
+def test_get_connection_uses_default_timeout(monkeypatch):
+    calls = []
+    monkeypatch.delenv("DATABASE_CONNECT_TIMEOUT", raising=False)
+    monkeypatch.setattr("app.db.psycopg.connect", _fake_connect(calls))
+    get_connection()
+    assert calls == [{"connect_timeout": 5}]
+
+
+def test_get_connection_honours_timeout_env_var(monkeypatch):
+    calls = []
+    monkeypatch.setenv("DATABASE_CONNECT_TIMEOUT", "2")
+    monkeypatch.setattr("app.db.psycopg.connect", _fake_connect(calls))
+    get_connection()
+    assert calls == [{"connect_timeout": 2}]
+
+
+@pytest.mark.parametrize("value", ["abc", "2.5", "0", "-1"])
+def test_get_connection_rejects_bad_timeout(monkeypatch, value):
+    monkeypatch.setenv("DATABASE_CONNECT_TIMEOUT", value)
+    with pytest.raises(ValueError, match="DATABASE_CONNECT_TIMEOUT"):
+        get_connection()

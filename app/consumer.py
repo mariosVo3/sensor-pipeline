@@ -98,8 +98,11 @@ def _handle(conn, raw: bytes) -> str:
         save_alert(conn, sensor_id, "duplicate", text)
         return ALERT
 
-    # 4. All good
-    save_reading(conn, reading)
+    # 4. Save it. The check above can miss a race with another consumer,
+    # so also look at the result: False means the database saw a duplicate
+    if not save_reading(conn, reading):
+        save_alert(conn, sensor_id, "duplicate", text)
+        return ALERT
     return SAVED
 
 

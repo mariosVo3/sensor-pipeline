@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import psycopg
 import pytest
 
 from app.db import (
@@ -136,6 +137,33 @@ def test_save_reading_with_missing_key_saves_nothing(conn):
         save_reading(conn, reading)
 
     assert conn.execute("SELECT count(*) FROM readings").fetchone() == (0,)
+
+
+def test_save_reading_returns_true_then_false_for_duplicate(conn):
+    create_tables(conn)
+    reading = {
+        "sensor_id": "sensor-1",
+        "timestamp": MEASURED_AT,
+        "pressure_bar": 3.2,
+        "temperature_c": 21.5,
+    }
+
+    assert save_reading(conn, reading) is True
+    assert save_reading(conn, reading) is False
+
+    assert conn.execute("SELECT count(*) FROM readings").fetchone() == (2,)
+
+
+def test_unique_index_blocks_duplicate_row(conn):
+    create_tables(conn)
+    insert = (
+        "INSERT INTO readings (sensor_id, metric, value, timestamp) "
+        "VALUES ('sensor-1', 'pressure_bar', 3.2, %s)"
+    )
+    conn.execute(insert, (MEASURED_AT,))
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        conn.execute(insert, (MEASURED_AT,))
 
 
 def test_save_alert_stores_a_row(conn):

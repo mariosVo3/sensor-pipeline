@@ -1,0 +1,55 @@
+# Fixer agent: add the label "agent:fixer" to a PR.
+# The agent applies the review comments, pushes the fixes and removes the label.
+# You add the label again for another round, so the fix loop never runs on its own.
+name: Agent - Fixer
+
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: agent-fixer-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: github.event.label.name == 'agent:fixer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements-dev.txt
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are the fixer agent. The PR branch is already checked out.
+
+            1. Read the PR and all review comments with `gh pr view ${{ github.event.pull_request.number }} --comments`
+               and the inline comments with `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`.
+            2. Fix every valid point. If you disagree with a comment, explain why in your summary instead of changing the code.
+            3. Run `ruff check .` and `pytest`. Fix problems until both pass.
+            4. Commit and push to the same branch.
+            5. Post a short summary with `gh pr comment`: what you fixed and what you did not change and why.
+            6. Remove the label: `gh pr edit ${{ github.event.pull_request.number }} --remove-label agent:fixer`.
+          claude_args: |
+            --model claude-sonnet-5-5
+            --max-turns 40
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr view:*),Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(pytest:*),Bash(ruff:*)"

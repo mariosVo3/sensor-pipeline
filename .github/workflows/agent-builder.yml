@@ -1,0 +1,58 @@
+# Builder agent: add the label "agent:builder" to an issue.
+# The agent implements the issue on a new branch and opens a PR that closes the issue.
+name: Agent - Builder
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: agent-builder-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event.label.name == 'agent:builder'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements-dev.txt
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            ISSUE NUMBER: ${{ github.event.issue.number }}
+
+            You are the builder agent. Implement this GitHub issue.
+
+            1. Read the issue with `gh issue view ${{ github.event.issue.number }}`.
+            2. Create a branch: `git checkout -b agent/issue-${{ github.event.issue.number }}`.
+            3. Implement the change. Keep it small and match the existing code style.
+               Write simple, readable Python with short comments: the repo owner is learning Python.
+            4. Add or update pytest tests for the change.
+            5. Run `ruff check .` and `pytest`. Fix problems until both pass.
+            6. Commit with a clear message and push the branch.
+            7. Open a PR with `gh pr create`. The body must contain "Closes #${{ github.event.issue.number }}"
+               and a short plain-English explanation of what changed and why.
+
+            If the issue is unclear or too big, do not guess: post a comment on the issue
+            with `gh issue comment` asking one short question, and stop.
+          claude_args: |
+            --model claude-sonnet-5-5
+            --max-turns 40
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(pytest:*),Bash(ruff:*)"

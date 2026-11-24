@@ -151,3 +151,16 @@ def test_dashboard_page(client):
     assert 'id="pressure-chart"' in response.text
     assert 'id="temperature-chart"' in response.text
     assert 'id="alerts-table"' in response.text
+
+
+def test_dashboard_page_works_when_database_is_down():
+    def broken_db():
+        raise RuntimeError("database is down")
+
+    app.dependency_overrides[get_db] = broken_db
+    try:
+        response = TestClient(app).get("/")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200

@@ -44,7 +44,10 @@
 // Normal ranges: keep in sync with PRESSURE_RANGE_BAR and TEMPERATURE_RANGE_C in app/producer.py
 const PRESSURE_RANGE = [20, 80];
 const TEMPERATURE_RANGE = [-10, 60];
-const READINGS_LIMIT = 200;   // rows (2 per reading), so about 100 readings
+// Rows, not readings: each reading is stored as 2 rows (pressure and temperature), so this is
+// about 100 readings. If the producer adds a metric, or a reading has only one valid metric,
+// the two charts can end up covering different time windows.
+const READINGS_LIMIT = 200;
 const ALERTS_LIMIT = 20;
 const REFRESH_MS = 5000;
 
@@ -59,6 +62,9 @@ async function getJson(url) {
   if (!response.ok) throw new Error(url + " returned " + response.status);
   return response.json();
 }
+
+// Positions of the lines inside a chart's datasets array
+const DATA = 0, MIN_LINE = 1, MAX_LINE = 2;
 
 // Make a line chart with the data line plus two dashed lines (min, max) for the normal range
 function makeChart(canvasId, label) {
@@ -85,21 +91,32 @@ function makeChart(canvasId, label) {
   });
 }
 
-const pressureChart = makeChart("pressure-chart", "Pressure (bar)");
-const temperatureChart = makeChart("temperature-chart", "Temperature (°C)");
+// Chart.js comes from a CDN; if it did not load (offline, blocked), the page still works without charts
+const chartsAvailable = typeof Chart !== "undefined";
+const pressureChart = chartsAvailable ? makeChart("pressure-chart", "Pressure (bar)") : null;
+const temperatureChart = chartsAvailable ? makeChart("temperature-chart", "Temperature (°C)") : null;
+if (!chartsAvailable) {
+  for (const box of document.querySelectorAll(".chart-box")) box.textContent = "Charts unavailable (Chart.js could not be loaded)";
+}
 
 // Put readings into a chart, oldest on the left
 function fillChart(chart, rows, range) {
+  if (!chart) return;   // Chart.js did not load
   chart.data.labels = rows.map((r) => new Date(r.timestamp).toLocaleTimeString());
-  chart.data.datasets[0].data = rows.map((r) => r.value);
-  chart.data.datasets[1].data = rows.map(() => range[0]);
-  chart.data.datasets[2].data = rows.map(() => range[1]);
+  chart.data.datasets[DATA].data = rows.map((r) => r.value);
+  chart.data.datasets[MIN_LINE].data = rows.map(() => range[0]);
+  chart.data.datasets[MAX_LINE].data = rows.map(() => range[1]);
   chart.update();
 }
 
 // Keep the dropdown in step with /sensors without losing the current choice
 function fillSensors(sensors) {
+  // Only rebuild when the list changed, so an open dropdown is not closed every 5 seconds
+  const shown = Array.from(select.options, (option) => option.value);
+  if (shown.join("\n") === sensors.join("\n")) return;
   const current = select.value;
+  // replaceChildren swaps all children of the element for the new ones;
+  // "..." spreads the array into separate arguments
   select.replaceChildren(...sensors.map((id) => new Option(id, id)));
   if (sensors.includes(current)) select.value = current;
 }
@@ -108,6 +125,7 @@ function fillAlerts(alerts) {
   tbody.replaceChildren(...alerts.map((alert) => {
     const row = document.createElement("tr");
     // textContent keeps untrusted text from being run as HTML
+    // "a ?? b" means a, unless a is null or undefined; then b (here "-" for alerts without a sensor)
     for (const text of [new Date(alert.created_at).toLocaleString(), alert.sensor_id ?? "-", alert.reason]) {
       const cell = document.createElement("td");
       cell.textContent = text;
@@ -123,11 +141,14 @@ function fillAlerts(alerts) {
 async function refresh() {
   try {
     fillSensors(await getJson("/sensors"));
+    const sensor = select.value;
     let readingCount = 0;
-    if (select.value) {
-      const url = "/sensors/" + encodeURIComponent(select.value) + "/readings?limit=" + READINGS_LIMIT;
+    if (sensor) {
+      const url = "/sensors/" + encodeURIComponent(sensor) + "/readings?limit=" + READINGS_LIMIT;
       // The API gives newest first; reverse so time runs left to right
       const rows = (await getJson(url)).reverse();
+      // The user may have picked another sensor while we waited; drop this stale answer
+      if (sensor !== select.value) return;
       const pressure = rows.filter((r) => r.metric === "pressure_bar");
       const temperature = rows.filter((r) => r.metric === "temperature_c");
       fillChart(pressureChart, pressure, PRESSURE_RANGE);

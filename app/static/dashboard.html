@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sensor Pipeline</title>
+<style>
+  /* Colors come from variables, so dark mode only has to change them */
+  :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --line: #ddd; --hover: #f0f0f0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --fg: #e8e8e8; --muted: #999; --line: #333; --hover: #242830; }
+  }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg);
+         max-width: 900px; margin: 0 auto; padding: 1rem; }
+  select { font: inherit; background: var(--bg); color: var(--fg); }
+  #summary { color: var(--muted); margin: 0.5rem 0 1rem; }
+  .chart-box { height: 240px; margin-bottom: 1rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--hover); }
+  #raw { white-space: pre-wrap; word-break: break-all; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Sensor Pipeline</h1>
+
+<label>Sensor <select id="sensor-select"></select></label>
+<div id="summary">Loading...</div>
+
+<div class="chart-box"><canvas id="pressure-chart"></canvas></div>
+<div class="chart-box"><canvas id="temperature-chart"></canvas></div>
+
+<h2>Newest alerts</h2>
+<table id="alerts-table">
+  <thead><tr><th>Time</th><th>Sensor</th><th>Reason</th></tr></thead>
+  <tbody></tbody>
+</table>
+<p>Raw message (hover or click a row): <span id="raw">-</span></p>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// Normal ranges: keep in sync with PRESSURE_RANGE_BAR and TEMPERATURE_RANGE_C in app/producer.py
+const PRESSURE_RANGE = [20, 80];
+const TEMPERATURE_RANGE = [-10, 60];
+const READINGS_LIMIT = 200;   // rows (2 per reading), so about 100 readings
+const ALERTS_LIMIT = 20;
+const REFRESH_MS = 5000;
+
+const select = document.getElementById("sensor-select");
+const summary = document.getElementById("summary");
+const rawBox = document.getElementById("raw");
+const tbody = document.querySelector("#alerts-table tbody");
+
+// Ask one endpoint for JSON
+async function getJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(url + " returned " + response.status);
+  return response.json();
+}
+
+// Make a line chart with the data line plus two dashed lines (min, max) for the normal range
+function makeChart(canvasId, label) {
+  const textColor = getComputedStyle(document.body).color;
+  const dashed = (name) => ({
+    label: name, data: [], borderColor: "#d33", borderDash: [6, 4],
+    pointRadius: 0, borderWidth: 1,
+  });
+  return new Chart(document.getElementById(canvasId), {
+    type: "line",
+    data: { labels: [], datasets: [
+      { label: label, data: [], borderColor: "#3a86ff", pointRadius: 2, tension: 0.2 },
+      dashed("min"), dashed("max"),
+    ] },
+    options: {
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { labels: { color: textColor } } },
+      scales: {
+        x: { ticks: { color: textColor } },
+        y: { ticks: { color: textColor } },
+      },
+    },
+  });
+}
+
+const pressureChart = makeChart("pressure-chart", "Pressure (bar)");
+const temperatureChart = makeChart("temperature-chart", "Temperature (°C)");
+
+// Put readings into a chart, oldest on the left
+function fillChart(chart, rows, range) {
+  chart.data.labels = rows.map((r) => new Date(r.timestamp).toLocaleTimeString());
+  chart.data.datasets[0].data = rows.map((r) => r.value);
+  chart.data.datasets[1].data = rows.map(() => range[0]);
+  chart.data.datasets[2].data = rows.map(() => range[1]);
+  chart.update();
+}
+
+// Keep the dropdown in step with /sensors without losing the current choice
+function fillSensors(sensors) {
+  const current = select.value;
+  select.replaceChildren(...sensors.map((id) => new Option(id, id)));
+  if (sensors.includes(current)) select.value = current;
+}
+
+function fillAlerts(alerts) {
+  tbody.replaceChildren(...alerts.map((alert) => {
+    const row = document.createElement("tr");
+    // textContent keeps untrusted text from being run as HTML
+    for (const text of [new Date(alert.created_at).toLocaleString(), alert.sensor_id ?? "-", alert.reason]) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      row.appendChild(cell);
+    }
+    const show = () => { rawBox.textContent = alert.raw; };
+    row.addEventListener("mouseenter", show);
+    row.addEventListener("click", show);
+    return row;
+  }));
+}
+
+async function refresh() {
+  try {
+    fillSensors(await getJson("/sensors"));
+    let readingCount = 0;
+    if (select.value) {
+      const url = "/sensors/" + encodeURIComponent(select.value) + "/readings?limit=" + READINGS_LIMIT;
+      // The API gives newest first; reverse so time runs left to right
+      const rows = (await getJson(url)).reverse();
+      const pressure = rows.filter((r) => r.metric === "pressure_bar");
+      const temperature = rows.filter((r) => r.metric === "temperature_c");
+      fillChart(pressureChart, pressure, PRESSURE_RANGE);
+      fillChart(temperatureChart, temperature, TEMPERATURE_RANGE);
+      readingCount = pressure.length;
+    }
+    const alerts = await getJson("/alerts?limit=" + ALERTS_LIMIT);
+    fillAlerts(alerts);
+    summary.textContent = readingCount + " readings shown, " + alerts.length +
+      " alerts shown, last updated " + new Date().toLocaleTimeString();
+  } catch (error) {
+    summary.textContent = "Could not load data: " + error.message;
+  }
+}
+
+select.addEventListener("change", refresh);
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

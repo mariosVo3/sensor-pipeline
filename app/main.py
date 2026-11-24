@@ -1,15 +1,26 @@
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Annotated
 
 import psycopg
 from fastapi import Depends, FastAPI, Query
+from fastapi.responses import FileResponse
 
-from app.db import get_alerts, get_connection, get_readings
+from app.db import get_alerts, get_connection, get_readings, get_sensors
 
 # The app version lives here, in one place
 VERSION = "0.1.0"
 
 app = FastAPI(title="Sensor Pipeline")
+
+# The dashboard page lives next to this file
+DASHBOARD_FILE = Path(__file__).parent / "static" / "dashboard.html"
+
+
+@app.get("/", include_in_schema=False)
+def dashboard() -> FileResponse:
+    """The live dashboard page."""
+    return FileResponse(DASHBOARD_FILE)
 
 
 @app.get("/health")
@@ -38,6 +49,12 @@ def get_db() -> Iterator[psycopg.Connection]:
 # Db = a psycopg connection that FastAPI opens per request through get_db
 Limit = Annotated[int, Query(ge=1, le=1000)]
 Db = Annotated[psycopg.Connection, Depends(get_db)]
+
+
+@app.get("/sensors")
+def sensors(conn: Db) -> list[str]:
+    """Sensor ids that have readings, sorted."""
+    return get_sensors(conn)
 
 
 @app.get("/sensors/{sensor_id}/readings")

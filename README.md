@@ -30,6 +30,9 @@ docker compose up --build
 curl http://localhost:8000/health   # {"status":"ok"}
 ```
 
+Dashboard: open http://localhost:8000 to see a chart of each sensor's readings and a table of
+alerts. It refreshes every 5 seconds. It loads Chart.js from a CDN, so it needs internet access.
+
 API docs (Swagger UI): http://localhost:8000/docs
 
 The API has no authentication and is for local use only.

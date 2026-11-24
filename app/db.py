@@ -141,6 +141,14 @@ def reading_exists(
     return row is not None
 
 
+def get_sensors(conn: psycopg.Connection) -> list[str]:
+    """Distinct sensor ids that have readings, sorted."""
+    rows = conn.execute(
+        "SELECT DISTINCT sensor_id FROM readings ORDER BY sensor_id"
+    ).fetchall()
+    return [sensor_id for (sensor_id,) in rows]
+
+
 def get_readings(conn: psycopg.Connection, sensor_id: str, limit: int) -> list[dict]:
     """Newest readings for one sensor, newest first. Unknown sensor gives an empty list."""
     rows = conn.execute(

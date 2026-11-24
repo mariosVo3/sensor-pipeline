@@ -126,3 +126,41 @@ def test_alerts_limit(client, conn):
 
 def test_alerts_limit_1000_is_accepted(client):
     assert client.get("/alerts?limit=1000").status_code == 200
+
+
+def test_sensors_sorted_and_distinct(client, conn):
+    add_reading(conn, "sensor-2", 9)
+    add_reading(conn, "sensor-1", 9)
+    add_reading(conn, "sensor-1", 10)
+
+    response = client.get("/sensors")
+
+    assert response.status_code == 200
+    assert response.json() == ["sensor-1", "sensor-2"]
+
+
+def test_sensors_empty_list(client):
+    assert client.get("/sensors").json() == []
+
+
+def test_dashboard_page(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert 'id="pressure-chart"' in response.text
+    assert 'id="temperature-chart"' in response.text
+    assert 'id="alerts-table"' in response.text
+
+
+def test_dashboard_page_works_when_database_is_down():
+    def broken_db():
+        raise RuntimeError("database is down")
+
+    app.dependency_overrides[get_db] = broken_db
+    try:
+        response = TestClient(app).get("/")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200

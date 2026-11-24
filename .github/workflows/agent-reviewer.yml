@@ -26,7 +26,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          track_progress: true
+          # No progress comment: it starts with "@owner", which emailed the owner on every review
           # PRs opened by the builder agent come from the claude bot
           allowed_bots: "claude[bot]"
           prompt: |
